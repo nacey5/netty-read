@@ -133,6 +133,7 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
     private void allocate(PoolThreadCache cache, PooledByteBuf<T> buf, final int reqCapacity) {
         final int sizeIdx = size2SizeIdx(reqCapacity);
 
+        // 内存根据大小分配在不同的区域
         if (sizeIdx <= smallMaxSizeIdx) {
             tcacheAllocateSmall(cache, buf, reqCapacity, sizeIdx);
         } else if (sizeIdx < nSizes) {
@@ -177,6 +178,7 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
         if (needsNormalAllocation) {
             lock();
             try {
+                //把请求内存优化成标准单元格大小，任何分配
                 allocateNormal(buf, reqCapacity, sizeIdx, cache);
             } finally {
                 unlock();
@@ -195,12 +197,21 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
         lock();
         try {
             allocateNormal(buf, reqCapacity, sizeIdx, cache);
+            //曾加分配的次数
             ++allocationsNormal;
         } finally {
             unlock();
         }
     }
 
+    /**
+     *
+     * 分配内存，在不同的模块，各自有自己的考量
+     * @param buf
+     * @param reqCapacity
+     * @param sizeIdx
+     * @param threadCache
+     */
     private void allocateNormal(PooledByteBuf<T> buf, int reqCapacity, int sizeIdx, PoolThreadCache threadCache) {
         assert lock.isHeldByCurrentThread();
         if (q050.allocate(buf, reqCapacity, sizeIdx, threadCache) ||
@@ -229,8 +240,10 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
         allocationsHuge.increment();
     }
 
+    //管理内存释放
     void free(PoolChunk<T> chunk, ByteBuffer nioBuffer, long handle, int normCapacity, PoolThreadCache cache) {
         chunk.decrementPinnedMemory(normCapacity);
+        //非池内内存，直接物理释放
         if (chunk.unpooled) {
             int size = chunk.chunkSize();
             destroyChunk(chunk);
@@ -238,11 +251,14 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
             deallocationsHuge.increment();
         } else {
             SizeClass sizeClass = sizeClass(handle);
+            //先尝试放入线程本地缓存
+            // 在线程本地缓存默认的情况下，缓存tidy类型的PoolSubpage数最多为512
             if (cache != null && cache.add(this, chunk, nioBuffer, handle, normCapacity, sizeClass)) {
                 // cached so not free it.
                 return;
             }
 
+            //当未成功放入缓存的时候，释放PollChunk
             freeChunk(chunk, handle, normCapacity, sizeClass, nioBuffer, false);
         }
     }
@@ -254,7 +270,7 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
     void freeChunk(PoolChunk<T> chunk, long handle, int normCapacity, SizeClass sizeClass, ByteBuffer nioBuffer,
                    boolean finalizer) {
         final boolean destroyChunk;
-        lock();
+        lock(); //内存分配和回收需要加锁，老版本是synchronized
         try {
             // We only call this if freeChunk is not called because of the PoolThreadCache finalizer as otherwise this
             // may fail due lazy class-loading in for example tomcat.
@@ -270,12 +286,15 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
                         throw new Error();
                 }
             }
+            //parent 未chunk梭子啊在PoolChunkList
+            //调用PoolChunkList的free()方法回收内存块，若内存完全空闲，则销毁
             destroyChunk = !chunk.parent.free(chunk, handle, normCapacity, nioBuffer);
         } finally {
             unlock();
         }
         if (destroyChunk) {
             // destroyChunk not need to be called while holding the synchronized lock.
+            // 当finalizer未true的，或者PoolChunkList未q000时，释放后的内存利用率为0
             destroyChunk(chunk);
         }
     }
@@ -721,6 +740,7 @@ abstract class PoolArena<T> extends SizeClasses implements PoolArenaMetric {
                     PlatformDependent.allocateDirectNoCleaner(capacity) : ByteBuffer.allocateDirect(capacity);
         }
 
+        //物理内存释放
         @Override
         protected void destroyChunk(PoolChunk<ByteBuffer> chunk) {
             if (PlatformDependent.useDirectBufferNoCleaner()) {

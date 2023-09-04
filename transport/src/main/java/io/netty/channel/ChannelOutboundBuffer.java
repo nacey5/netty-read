@@ -287,6 +287,7 @@ public final class ChannelOutboundBuffer {
     public boolean remove() {
         Entry e = flushedEntry;
         if (e == null) {
+            //如果获取不到链头节点，则清空ByteBuf缓存
             clearNioBuffers();
             return false;
         }
@@ -295,16 +296,22 @@ public final class ChannelOutboundBuffer {
         ChannelPromise promise = e.promise;
         int size = e.pendingSize;
 
+        //从链表中移除此节点，同时将flushedEntry指针指向下一节点
         removeEntry(e);
 
         if (!e.cancelled) {
             // only release message, notify and decrement if it was not canceled before.
+            // 节点在非取消状态下
+            // 由于没有地方用得上节点数据，因此需要释放其内存空间
+            // 并通知处理成功
+            // 同时缓存总数据大小相应的减小
             ReferenceCountUtil.safeRelease(msg);
             safeSuccess(promise);
             decrementPendingOutboundBytes(size, false, true);
         }
 
         // recycle the entry
+        // 回收Entry对象并放回对象池
         e.unguardedRecycle();
 
         return true;
@@ -346,8 +353,11 @@ public final class ChannelOutboundBuffer {
         return true;
     }
 
+    // 移除节点
+    // 通过是修改flushedEntry指针
     private void removeEntry(Entry e) {
         if (-- flushed == 0) {
+            // 若最后的节点也被移除了，则所有指针未null
             // processed everything
             flushedEntry = null;
             if (e == tailEntry) {
@@ -355,26 +365,34 @@ public final class ChannelOutboundBuffer {
                 unflushedEntry = null;
             }
         } else {
+            // 否则预写入指针会不断向前移动
             flushedEntry = e.next;
         }
     }
 
     /**
+     * 移除写成功的字节
      * Removes the fully written entries and update the reader index of the partially written entry.
      * This operation assumes all messages in this buffer is {@link ByteBuf}.
      */
     public void removeBytes(long writtenBytes) {
         for (;;) {
+            //与nioBuffer一样，从准备写入socket的节点开始
+            //获取此节点的buf数据
             Object msg = current();
             if (!(msg instanceof ByteBuf)) {
                 assert writtenBytes == 0;
                 break;
             }
-
+            //把实际发送的msg转成ByteBuf
             final ByteBuf buf = (ByteBuf) msg;
+            //获得读指针
             final int readerIndex = buf.readerIndex();
+            //具体的可发送字节
             final int readableBytes = buf.writerIndex() - readerIndex;
 
+            //如果当前节点的字节数小于或等于已发送的字节数
+            //则直接删除整个节点，并更新进度
             if (readableBytes <= writtenBytes) {
                 if (writtenBytes != 0) {
                     progress(readableBytes);
@@ -382,6 +400,7 @@ public final class ChannelOutboundBuffer {
                 }
                 remove();
             } else { // readableBytes > writtenBytes
+                // 若当前节点还有一部分未发送，则缩小当前节点的可发送字节长度
                 if (writtenBytes != 0) {
                     buf.readerIndex(readerIndex + (int) writtenBytes);
                     progress(writtenBytes);
@@ -389,6 +408,10 @@ public final class ChannelOutboundBuffer {
                 break;
             }
         }
+        // 由于每次在发送时
+        // 都需要从线程本地缓存中获取ByteBuffer数组
+        // 且每次获取的数组应无任何数据
+        // 因此此处需要清空它
         clearNioBuffers();
     }
 
@@ -398,6 +421,7 @@ public final class ChannelOutboundBuffer {
         int count = nioBufferCount;
         if (count > 0) {
             nioBufferCount = 0;
+            // 数组填充null对象
             Arrays.fill(NIO_BUFFERS.get(), 0, count, null);
         }
     }

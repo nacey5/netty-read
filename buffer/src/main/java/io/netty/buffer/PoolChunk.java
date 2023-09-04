@@ -163,6 +163,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
 
     /**
      * manage all subpages in this chunk
+     * 其跟page的节点数一致
      */
     private final PoolSubpage<T>[] subpages;
 
@@ -311,6 +312,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
         return 100 - freePercentage;
     }
 
+    // 内存具体的分配方法
     boolean allocate(PooledByteBuf<T> buf, int reqCapacity, int sizeIdx, PoolThreadCache cache) {
         final long handle;
         if (sizeIdx <= arena.smallMaxSizeIdx) {
@@ -331,7 +333,9 @@ final class PoolChunk<T> implements PoolChunkMetric {
                     nextSub.chunk.initBufWithSubpage(buf, null, handle, reqCapacity, cache);
                     return true;
                 }
+                //偏移量
                 handle = allocateSubpage(sizeIdx, head);
+                //分配失败
                 if (handle < 0) {
                     return false;
                 }
@@ -351,6 +355,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
         }
 
         ByteBuffer nioBuffer = cachedNioBuffers != null? cachedNioBuffers.pollLast() : null;
+        //初始化申请到的内存数据，并对PoolByteBuf对象进行初始化
         initBuf(buf, nioBuffer, handle, reqCapacity, cache);
         return true;
     }
@@ -457,6 +462,9 @@ final class PoolChunk<T> implements PoolChunkMetric {
      * @param head head of subpages
      *
      * @return index in memoryMap
+     *
+     *
+     * 当内存小于8KB的时候，这个方法被调用
      */
     private long allocateSubpage(int sizeIdx, PoolSubpage<T> head) {
         //allocate a new run
@@ -467,13 +475,14 @@ final class PoolChunk<T> implements PoolChunkMetric {
             return -1;
         }
 
+        // 获得偏移量
         int runOffset = runOffset(runHandle);
         assert subpages[runOffset] == null;
         int elemSize = arena.sizeIdx2size(sizeIdx);
 
         PoolSubpage<T> subpage = new PoolSubpage<T>(head, this, pageShifts, runOffset,
                 runSize(pageShifts, runHandle), elemSize);
-
+        //保存在pages中的都是链表
         subpages[runOffset] = subpage;
         return subpage.allocate();
     }
@@ -484,9 +493,12 @@ final class PoolChunk<T> implements PoolChunkMetric {
      * we can completely free the owning Page so it is available for subsequent allocations
      *
      * @param handle handle to free
+     *
+     *               释放内存
      */
     void free(long handle, int normCapacity, ByteBuffer nioBuffer) {
         if (isSubpage(handle)) {
+            //得到对应的idx和offset
             int sizeIdx = arena.size2SizeIdx(normCapacity);
             PoolSubpage<T> head = arena.findSubpagePoolHead(sizeIdx);
 
@@ -498,6 +510,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
             head.lock();
             try {
                 assert subpage != null && subpage.doNotDestroy;
+                //释放subpage
                 if (subpage.free(head, bitmapIdx(handle))) {
                     //the subpage is still used, do not free it
                     return;
@@ -596,9 +609,11 @@ final class PoolChunk<T> implements PoolChunkMetric {
     void initBuf(PooledByteBuf<T> buf, ByteBuffer nioBuffer, long handle, int reqCapacity,
                  PoolThreadCache threadCache) {
         if (isSubpage(handle)) {
+            //解析高低位，并获得节点偏移量和节点的高度--》init0
             initBufWithSubpage(buf, nioBuffer, handle, reqCapacity, threadCache);
         } else {
             int maxLength = runSize(pageShifts, handle);
+            //计算偏移量，offset的值为内存对其偏移量
             buf.init(this, nioBuffer, handle, runOffset(handle) << pageShifts,
                     reqCapacity, maxLength, arena.parent.threadCache());
         }
@@ -680,6 +695,7 @@ final class PoolChunk<T> implements PoolChunkMetric {
         arena.destroyChunk(this);
     }
 
+    //偏移量算法
     static int runOffset(long handle) {
         return (int) (handle >> RUN_OFFSET_SHIFT);
     }

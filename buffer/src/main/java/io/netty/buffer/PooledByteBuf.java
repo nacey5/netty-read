@@ -269,6 +269,7 @@ abstract class PooledByteBuf<T> extends AbstractReferenceCountedByteBuf {
     @Override
     public final int setBytes(int index, ScatteringByteChannel in, int length) throws IOException {
         try {
+            //从NioSocketChannel中读取请求数据，并将其写入PoolByteBuf
             return in.read(internalNioBuffer(index, length));
         } catch (ClosedChannelException ignored) {
             //客户端主动关闭链接，返回-1

@@ -137,6 +137,7 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             }
         }
 
+        //循环读内存
         @Override
         public final void read() {
             final ChannelConfig config = config();

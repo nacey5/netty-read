@@ -117,8 +117,11 @@ final class PoolChunkList<T> implements PoolChunkListMetric {
     }
 
     boolean free(PoolChunk<T> chunk, long handle, int normCapacity, ByteBuffer nioBuffer) {
+        //先调用 chunk.free，把内存标记为已释放
         chunk.free(handle, normCapacity, nioBuffer);
         if (chunk.freeBytes > freeMaxThreshold) {
+            //如果内存利用字节数大于freeMaxThreshold
+            //需要把PoolChunk凑够前PoolChunkList移除
             remove(chunk);
             // Move the PoolChunk down the PoolChunkList linked-list.
             return move0(chunk);
@@ -144,12 +147,14 @@ final class PoolChunkList<T> implements PoolChunkListMetric {
      * {@link PoolChunkList} that has the correct minUsage / maxUsage in respect to {@link PoolChunk#usage()}.
      */
     private boolean move0(PoolChunk<T> chunk) {
+        //在当前PoolChunkList为q000时，直接物理释放
         if (prevList == null) {
             // There is no previous PoolChunkList so return false which result in having the PoolChunk destroyed and
             // all memory associated with the PoolChunk will be released.
             assert chunk.usage() == 0;
             return false;
         }
+        //把PoolChunk移动到签名的PoolChunkList
         return prevList.move(chunk);
     }
 
@@ -178,6 +183,7 @@ final class PoolChunkList<T> implements PoolChunkListMetric {
         }
     }
 
+    // 从PoolChunk链表中移除
     private void remove(PoolChunk<T> cur) {
         if (cur == head) {
             head = cur.next;

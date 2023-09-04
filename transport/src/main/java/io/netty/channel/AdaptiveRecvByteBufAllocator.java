@@ -126,19 +126,26 @@ public class AdaptiveRecvByteBufAllocator extends DefaultMaxMessagesRecvByteBufA
         private void record(int actualReadBytes) {
             if (actualReadBytes <= SIZE_TABLE[max(0, index - INDEX_DECREMENT)]) {
                 if (decreaseNow) {
+                    //若减小标识decreaseNow连续两次为true，则说明下次读取字节数需要减小
+                    //SIZE_TABLE 下标减1
                     index = max(index - INDEX_DECREMENT, minIndex);
                     nextReceiveBufferSize = SIZE_TABLE[index];
                     decreaseNow = false;
                 } else {
+                    //第一次减小，只做记录
                     decreaseNow = true;
                 }
+                //实际读取的字节大小要大于或等于预测值
             } else if (actualReadBytes >= nextReceiveBufferSize) {
+                //SIZE_TABLE下标+4
                 index = min(index + INDEX_INCREMENT, maxIndex);
+                //若当前缓存为512，则变成512*2^4
                 nextReceiveBufferSize = SIZE_TABLE[index];
                 decreaseNow = false;
             }
         }
 
+        //循环内读取后被调用
         @Override
         public void readComplete() {
             record(totalBytesRead());
